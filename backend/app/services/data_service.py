@@ -5,7 +5,11 @@ from stockstats import StockDataFrame
 from sklearn.preprocessing import MinMaxScaler
 from transformers import pipeline
 
-sentiment_model = pipeline("sentiment-analysis")
+sentiment_model = pipeline(
+    "sentiment-analysis",
+    model="ProsusAI/finbert",
+    tokenizer="ProsusAI/finbert"
+)
 
 def data_collection(ticker: str) -> pd.DataFrame:
     start_date = datetime.datetime(2013, 8, 24)
@@ -97,28 +101,57 @@ def transformer_pipeline(data):
 
 
 def get_sentiment(ticker):
-    # simple news fetch via yfinance
     news = yf.Ticker(ticker).news
 
     if not news:
-        return {"score": 0, "label": "Neutral", "warning": False}
+        return {
+            "score": 0,
+            "label": "Neutral",
+            "warning": False,
+            "headlines": [],
+            "details": []
+        }
 
-    headlines = [n["content"]["title"] for n in news[:5] if "content" in n and "title" in n["content"]]
+    # 🔥 More stable (use 10 instead of 5)
+    headlines = [
+        n["content"]["title"]
+        for n in news[:10]
+        if "content" in n and "title" in n["content"]
+    ]
+
+    if not headlines:
+        return {
+            "score": 0,
+            "label": "Neutral",
+            "warning": False,
+            "headlines": [],
+            "details": []
+        }
+
     results = sentiment_model(headlines)
 
-    score = sum([1 if r["label"] == "POSITIVE" else -1 for r in results]) / len(results)
+    # 🔥 Correct FinBERT scoring (confidence weighted)
+    score = sum([
+        (r["score"] if r["label"].lower() == "positive" else
+         -r["score"] if r["label"].lower() == "negative" else
+         0)
+        for r in results
+    ]) / len(results)
 
-    if score > 0.2:
+    # 🔥 Better thresholds
+    if score > 0.1:
         label = "Positive"
-    elif score < -0.2:
+    elif score < -0.1:
         label = "Negative"
     else:
         label = "Neutral"
 
-    warning = abs(score) > 0.5
+    warning = abs(score) > 0.6
 
     return {
-        "score": score,
+        "score": round(score, 3),
         "label": label,
-        "warning": warning
+        "warning": warning,
+        "headlines": headlines,
+        "details": results
     }
